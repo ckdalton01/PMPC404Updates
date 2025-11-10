@@ -8,7 +8,7 @@
 
 .PARAMETER LogFile
     (Optional) Path to PatchDownloader.log.
-    Default: $env:WINDIR\CCM\Logs\PatchDownloader.log
+    Default: $env:ProgramFiles\SMS_CCM\Logs\PatchDownloader.log
 
 .PARAMETER CsvFile
     (Optional) Path to Patch My PC publishing history CSV.
@@ -37,7 +37,7 @@
 #>
 
 param(
-    [string]$LogFile = "$env:WINDIR\CCM\Logs\PatchDownloader.log",
+    [string]$LogFile = "$env:ProgramFiles\SMS_CCM\Logs\PatchDownloader.log",
     [string]$CsvFile = "$env:ProgramFiles\PatchMyPC\Patch My PC Publishing Service\PatchMyPC-PublishingHistory.csv",
     [string]$Output
 )
@@ -139,6 +139,16 @@ foreach ($update in $failedUpdates) {
 
 # Export to file if requested
 if ($Output) {
+    $outputDir = Split-Path -Parent $Output
+    if (-not (Test-Path $outputDir)) {
+        try {
+            New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
+            Write-Host "Created output directory: $outputDir"
+        } catch {
+            Write-Host "Failed to create output directory: $_"
+        }
+    }
+
     try {
         $results | Export-Csv -Path $Output -NoTypeInformation -Encoding UTF8
         Write-Host "Results exported to: $Output"
