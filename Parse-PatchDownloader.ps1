@@ -12,7 +12,7 @@
 
 .PARAMETER CsvFile
     (Optional) Path to Patch My PC publishing history CSV.
-    Default: $env:ProgramFiles\PatchMyPC\Patch My PC Publishing Service\PatchMyPC-PublishingHistory.csv
+    Default: $env:ProgramFiles\Patch My PC\Patch My PC Publishing Service\PatchMyPC-PublishingHistory.csv
 
 .PARAMETER Output
     (Optional) Path to save results as CSV. 
@@ -38,7 +38,7 @@
 
 param(
     [string]$LogFile = "$env:ProgramFiles\SMS_CCM\Logs\PatchDownloader.log",
-    [string]$CsvFile = "$env:ProgramFiles\PatchMyPC\Patch My PC Publishing Service\PatchMyPC-PublishingHistory.csv",
+    [string]$CsvFile = "$env:ProgramFiles\Patch My PC\Patch My PC Publishing Service\PatchMyPC-PublishingHistory.csv",
     [string]$Output
 )
 
@@ -156,3 +156,7 @@ if ($Output) {
         Write-Host "Failed to write output CSV: $_"
     }
 }
+
+Write-Host ""
+Write-Host "Consider republishing the updates above. See this KB for details:"
+Write-Host "https://patchmypc.com/kb/when-how-republish-patch-my/"

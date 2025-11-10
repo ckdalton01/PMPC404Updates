@@ -24,7 +24,7 @@ If not specified, the script uses the following default paths:
 | Argument | Default Path |
 |-----------|---------------|
 | `-LogFile` | `C:\Program Files\SMS_CCM\Logs\PatchDownloader.log` |
-| `-CsvFile` | `C:\Program Files\PatchMyPC\Patch My PC Publishing Service\PatchMyPC-PublishingHistory.csv` |
+| `-CsvFile` | `C:\Program Files\Patch My PC\Patch My PC Publishing Service\PatchMyPC-PublishingHistory.csv` |
 
 ---
 
