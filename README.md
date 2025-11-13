@@ -32,3 +32,5 @@ If not specified, the script uses the following default paths:
 
 ```powershell
 .\Parse-PatchDownloader.ps1 [-LogFile <path>] [-CsvFile <path>] [-Output <path>]
+
+  ![alt text](image.png)

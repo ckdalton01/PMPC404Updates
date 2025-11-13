@@ -104,25 +104,29 @@ $results = @()
 
 foreach ($update in $failedUpdates) {
     $id = $update.Key
-    $match = $csvData | Where-Object { $_.UpdateID -eq $id }
+    $match = $csvData | Where-Object { 
+        $_.UpdateID -eq $id -and 
+        ($_.Operation -eq "Update Published" -or 
+         $_.Operation -eq "Update Revised" -or 
+         $_.Operation -eq "WSUS Update Published" -or 
+         $_.Operation -eq "WSUS Update Revised")
+    } | Select-Object -First 1
 
     if ($match) {
-        foreach ($m in $match) {
-            $obj = [PSCustomObject]@{
-                UpdateID = $id
-                Title    = $m.Title
-                Date     = $m.Date
-                Version  = $m.Version
-                Severity = $m.Severity
-            }
-            $results += $obj
-            Write-Host "UpdateID: $id"
-            Write-Host "  Title : $($m.Title)"
-            Write-Host "  Date  : $($m.Date)"
-            Write-Host "  Version: $($m.Version)"
-            Write-Host "  Severity: $($m.Severity)"
-            Write-Host ""
+        $obj = [PSCustomObject]@{
+            UpdateID = $id
+            Title    = $match.Title
+            Date     = $match.Date
+            Version  = $match.Version
+            Severity = $match.Severity
         }
+        $results += $obj
+        Write-Host "UpdateID: $id"
+        Write-Host "  Title : $($match.Title)"
+        Write-Host "  Date  : $($match.Date)"
+        Write-Host "  Version: $($match.Version)"
+        Write-Host "  Severity: $($match.Severity)"
+        Write-Host ""
     }
     else {
         Write-Host "UpdateID: $id (not found in CSV)"
