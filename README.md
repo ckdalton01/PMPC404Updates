@@ -17,18 +17,32 @@ This tool helps identify updates that failed to download and maps them back to t
 
 ---
 
-## Default Paths
 
-If not specified, the script uses the following default paths:
+## **Default Paths**
+- **Log file:**  
+  `C:\Program Files\SMS_CCM\Logs\PatchDownloader.log`
 
-| Argument | Default Path |
-|-----------|---------------|
-| `-LogFile` | `C:\Program Files\SMS_CCM\Logs\PatchDownloader.log` |
-| `-CsvFile` | `C:\Program Files\Patch My PC\Patch My PC Publishing Service\PatchMyPC-PublishingHistory.csv` |
+- **Publishing history CSV:**  
+  `C:\Program Files\Patch My PC\Patch My PC Publishing Service\PatchMyPC-PublishingHistory.csv`
+
+Both can be overridden using command-line arguments.
 
 ---
 
-## Usage
+## **Parameters**
+| Parameter | Description |
+|----------|-------------|
+| `-LogFile` | Optional. Path to PatchDownloader.log |
+| `-CsvFile` | Optional. Path to Patch My PC Publishing History |
+| `-ZipFile` | Optional. ZIP file containing PatchDownloader.log |
+| `-Output` | Optional. CSV path to export results |
 
+If both `-LogFile` and `-ZipFile` are used, **ZipFile takes precedence**.
+
+---
+
+## **Examples**
+
+### **Use default log + default CSV**
 ```powershell
-.\Parse-PatchDownloader.ps1 [-LogFile <path>] [-CsvFile <path>] [-Output <path>]
+.\Parse-PatchDownloader.ps1

@@ -1,49 +1,93 @@
 ﻿<#
 .SYNOPSIS
-    Parse the SCCM PatchDownloader.log and cross-reference failed downloads with the Patch My PC publishing history.
+    Parse the SCCM PatchDownloader.log and cross-reference failed downloads with
+    the Patch My PC publishing history.
 
 .DESCRIPTION
-    This tool analyzes the PatchDownloader.log (used by SCCM/WSUS) and identifies updates that failed to download
-    with HTTP 404 errors. It then cross-references those update IDs against Patch My PC's publishing history CSV file.
+    This tool analyzes the PatchDownloader.log (from SCCM/WSUS) and identifies updates
+    that failed to download with HTTP 404 errors or related failure conditions.
+    It then cross-references those UpdateIDs with Patch My PC’s publishing history
+    to produce a detailed failure report.
+
+    Defaults:
+      - LogFile: C:\Program Files\SMS_CCM\Logs\PatchDownloader.log
+      - CsvFile: C:\Program Files\Patch My PC\Patch My PC Publishing Service\PatchMyPC-PublishingHistory.csv
 
 .PARAMETER LogFile
-    (Optional) Path to PatchDownloader.log.
-    Default: $env:ProgramFiles\SMS_CCM\Logs\PatchDownloader.log
+    Optional. Path to PatchDownloader.log.
 
 .PARAMETER CsvFile
-    (Optional) Path to Patch My PC publishing history CSV.
-    Default: $env:ProgramFiles\Patch My PC\Patch My PC Publishing Service\PatchMyPC-PublishingHistory.csv
+    Optional. Path to Patch My PC Publishing History CSV.
+
+.PARAMETER ZipFile
+    Optional. A ZIP file containing a PatchDownloader.log. If provided, the ZIP
+    will be extracted and the log parsed automatically.
 
 .PARAMETER Output
-    (Optional) Path to save results as CSV. 
-    If not provided, results are printed to the console.
+    Optional. Path to export the final results as a CSV.
 
 .EXAMPLE
-    # Example 1 - Use defaults
+    # Use default log and CSV paths
     .\Parse-PatchDownloader.ps1
 
 .EXAMPLE
-    # Example 2 - Specify log file and CSV file
-    .\Parse-PatchDownloader.ps1 -LogFile "D:\Temp\PatchDownloader.log" -CsvFile "D:\PMPC\PublishingHistory.csv"
+    # Provide explicit log and CSV paths
+    .\Parse-PatchDownloader.ps1 -LogFile "D:\Logs\PatchDownloader.log" -CsvFile "D:\PMPC\PublishingHistory.csv"
 
 .EXAMPLE
-    # Example 3 - Export results to CSV
-    .\Parse-PatchDownloader.ps1 -Output "C:\Temp\FailedUpdates.csv"
+    # Export results to CSV
+    .\Parse-PatchDownloader.ps1 -Output "C:\Reports\FailedUpdates.csv"
+
+.EXAMPLE
+    # Use a ZIP file
+    .\Parse-PatchDownloader.ps1 -ZipFile "C:\Temp\logs.zip"
+
+.EXAMPLE
+    # Use a ZIP file and export results
+    .\Parse-PatchDownloader.ps1 -ZipFile "C:\Temp\logs.zip" -Output "C:\Results\failed.csv"
 
 .NOTES
-    Author: C. Dalton (2025)
-    Tested on: PowerShell 5.1 / 7.x
-    Description: Finds WSUS/SCCM PatchDownloader failures (HTTP 404) and matches them to published updates.
+    Author: C. Dalton
+    Date: 2025-11-06
 #>
 
 param(
     [string]$LogFile = "$env:ProgramFiles\SMS_CCM\Logs\PatchDownloader.log",
     [string]$CsvFile = "$env:ProgramFiles\Patch My PC\Patch My PC Publishing Service\PatchMyPC-PublishingHistory.csv",
+    [string]$ZipFile,
     [string]$Output
 )
 
 Write-Host ""
 Write-Host "=== PatchDownloader Log Parser ==="
+
+# Handle zip file extraction
+$tempExtractPath = $null
+if ($ZipFile) {
+    if (-not (Test-Path $ZipFile)) {
+        Write-Host "Zip file not found: $ZipFile"
+        exit 1
+    }
+    
+    Write-Host "ZipFile: $ZipFile"
+    Write-Host "Extracting zip file..."
+    
+    $tempExtractPath = Join-Path $env:TEMP "PatchDownloaderParser_$(Get-Date -Format 'yyyyMMdd_HHmmss')"
+    
+    try {
+        Expand-Archive -Path $ZipFile -DestinationPath $tempExtractPath -Force
+        Write-Host "Extracted to: $tempExtractPath"
+        
+        # Override LogFile and CsvFile paths
+        $LogFile = Join-Path $tempExtractPath "Client\PatchDownloader.log"
+        $CsvFile = Join-Path $tempExtractPath "PatchMyPC\PatchMyPC-PublishingHistory.csv"
+    }
+    catch {
+        Write-Host "Failed to extract zip file: $_"
+        exit 1
+    }
+}
+
 Write-Host "LogFile: $LogFile"
 Write-Host "CsvFile: $CsvFile"
 if ($Output) { Write-Host "Output : $Output" }
@@ -52,10 +96,12 @@ Write-Host ""
 # Validate files
 if (-not (Test-Path $LogFile)) {
     Write-Host "Log file not found: $LogFile"
+	Write-Host "If the log file is in another location, use -LogFile"
     exit 1
 }
 if (-not (Test-Path $CsvFile)) {
     Write-Host "CSV file not found: $CsvFile"
+	Write-Host "If the CSV file is in another location, use -CsvFile"
     exit 1
 }
 
@@ -164,3 +210,16 @@ if ($Output) {
 Write-Host ""
 Write-Host "Consider republishing the updates above. See this KB for details:"
 Write-Host "https://patchmypc.com/kb/when-how-republish-patch-my/"
+
+# Cleanup temporary extraction folder
+if ($tempExtractPath -and (Test-Path $tempExtractPath)) {
+    try {
+        Remove-Item -Path $tempExtractPath -Recurse -Force
+        Write-Host ""
+        Write-Host "Cleaned up temporary files."
+    }
+    catch {
+        Write-Host ""
+        Write-Host "Warning: Could not clean up temporary folder: $tempExtractPath"
+    }
+}
