@@ -231,22 +231,49 @@ if (-not (Test-Path $LogFile)) {
     exit 1
 }
 if (-not (Test-Path $CsvFile)) {
-    Write-Host "ERROR: CSV file not found: $CsvFile"
-    Write-Host "If the CSV file is in another location, use -CsvFile <path>"
-    exit 1
-}
-
-# Import CSV
-try {
-    $csvData = Import-Csv -Path $CsvFile -ErrorAction Stop
-    if ($csvData.Count -eq 0) {
-        Write-Host "WARNING: CSV file is empty"
+    if ($SMS) {
+        $csvData = @()  # Empty array so later logic works
+    } else {
+        Write-Host "ERROR: CSV file not found: $CsvFile"
+        Write-Host "If the CSV file is in another location, use -CsvFile <path>"
+        exit 1
     }
 }
-catch {
-    Write-Host "ERROR: Failed to import CSV file: $($_.Exception.Message)"
-    exit 1
+
+
+
+# Import CSV if available
+$csvData = @()  # Initialize as empty array
+if (Test-Path $CsvFile) {
+    try {
+        $csvData = Import-Csv -Path $CsvFile -ErrorAction Stop
+        if ($csvData.Count -eq 0) {
+            Write-Host "WARNING: CSV file is empty"
+            if (-not $SMS) {
+                Write-Host "CSV is required when -SMS is not used."
+                exit 1
+            }
+        }
+    }
+    catch {
+        Write-Host "ERROR: Failed to import CSV file: $($_.Exception.Message)"
+        if (-not $SMS) {
+            exit 1
+        } else {
+            Write-Host "Continuing with WMI only (SMS mode)."
+            $csvData = @()
+        }
+    }
 }
+else {
+    if (-not $SMS) {
+        Write-Host "ERROR: CSV file not found: $CsvFile"
+        exit 1
+    } else {
+        Write-Host "CSV file not found, continuing with WMI only (SMS mode)."
+    }
+}
+
 
 try {
     $logLines = Get-Content -Path $LogFile -ErrorAction Stop
@@ -294,48 +321,52 @@ if ($failedUpdates.Count -eq 0) {
 }
 
 Write-Host "Failed Downloads Found:`n"
+$results = @()   # Initialize as an empty array
 
-# Prepare output collection
-$results = @()
-
+# === UPDATED BLOCK WITH WMI INTEGRATION ===
 foreach ($update in $failedUpdates) {
     $id = $update.Key
-    $match = $csvData | Where-Object { 
-        $_.UpdateID -eq $id -and 
-        ($_.Operation -eq "Update Published" -or 
-         $_.Operation -eq "Update Revised" -or 
-         $_.Operation -eq "WSUS Update Published" -or 
+    $wmiData = $null
+
+    if ($SMS -and $siteCode) {
+        try {
+            $wmiData = Get-CimInstance -ClassName SMS_SoftwareUpdate `
+                -Namespace "root\SMS\site_$siteCode" `
+                -Filter "CI_UniqueID = '$id'" |
+                Select-Object LocalizedDisplayName, DateCreated, CI_UniqueID
+        } catch {
+            Write-Host "Warning: WMI query failed for UpdateID $($id): $($_.Exception.Message)"
+        }
+    }
+
+    $match = $csvData | Where-Object {
+        $_.UpdateID -eq $id -and
+        ($_.Operation -eq "Update Published" -or
+         $_.Operation -eq "Update Revised" -or
+         $_.Operation -eq "WSUS Update Published" -or
          $_.Operation -eq "WSUS Update Revised")
     } | Select-Object -First 1
 
-    if ($match) {
-        $obj = [PSCustomObject]@{
-            UpdateID = $id
-            Title    = $match.Title
-            Date     = $match.Date
-            Version  = $match.Version
-            Severity = $match.Severity
-        }
-        $results += $obj
-        Write-Host "UpdateID: $id"
-        Write-Host "  Title : $($match.Title)"
-        Write-Host "  Date  : $($match.Date)"
-        Write-Host "  Version: $($match.Version)"
-        Write-Host "  Severity: $($match.Severity)"
-        Write-Host ""
+    $obj = [PSCustomObject]@{
+        UpdateID = $id
+        Title    = if ($match) { $match.Title } elseif ($wmiData) { $wmiData.LocalizedDisplayName } else { "Not found" }
+        Date     = if ($match) { $match.Date } elseif ($wmiData) { $wmiData.DateCreated } else { "" }
+        Version  = if ($match) { $match.Version } else { "" }
+        Severity = if ($match) { $match.Severity } else { "" }
+        Source   = if ($match -and $wmiData) { "CSV + WMI" } elseif ($match) { "CSV" } elseif ($wmiData) { "WMI" } else { "None" }
     }
-    else {
-        Write-Host "UpdateID: $id (not found in CSV)"
-        $results += [PSCustomObject]@{
-            UpdateID = $id
-            Title    = "Not found in CSV"
-            Date     = ""
-            Version  = ""
-            Severity = ""
-        }
-        Write-Host ""
-    }
+
+    $results += $obj
+
+    Write-Host "UpdateID: $id"
+    Write-Host "  Title : $($obj.Title)"
+    Write-Host "  Date  : $($obj.Date)"
+    Write-Host "  Version: $($obj.Version)"
+    Write-Host "  Severity: $($obj.Severity)"
+    Write-Host "  Source: $($obj.Source)"
+    Write-Host ""
 }
+
 
 # Export to file if requested
 if ($Output) {
