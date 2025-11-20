@@ -6,7 +6,7 @@
 .DESCRIPTION
     This tool analyzes the PatchDownloader.log (from SCCM/WSUS) and identifies updates
     that failed to download with HTTP 404 errors or related failure conditions.
-    It then cross-references those UpdateIDs with Patch My PC’s publishing history
+    It then cross-references those UpdateIDs with Patch My PC's publishing history
     to produce a detailed failure report.
 
     Defaults:
@@ -25,6 +25,10 @@
 
 .PARAMETER Output
     Optional. Path to export the final results as a CSV.
+
+.PARAMETER SMS
+    Optional. Switch to automatically detect SCCM installation and use the
+    appropriate log file path from the registry.
 
 .EXAMPLE
     # Use default log and CSV paths
@@ -46,6 +50,10 @@
     # Use a ZIP file and export results
     .\Parse-PatchDownloader.ps1 -ZipFile "C:\Temp\logs.zip" -Output "C:\Results\failed.csv"
 
+.EXAMPLE
+    # Use SMS registry to auto-detect SCCM installation path
+    .\Parse-PatchDownloader.ps1 -SMS
+
 .NOTES
     Author: C. Dalton
     Date: 2025-11-06
@@ -55,11 +63,100 @@ param(
     [string]$LogFile = "$env:ProgramFiles\SMS_CCM\Logs\PatchDownloader.log",
     [string]$CsvFile = "$env:ProgramFiles\Patch My PC\Patch My PC Publishing Service\PatchMyPC-PublishingHistory.csv",
     [string]$ZipFile,
-    [string]$Output
+    [string]$Output,
+    [switch]$SMS
 )
 
 Write-Host ""
 Write-Host "=== PatchDownloader Log Parser ==="
+
+# Handle -SMS switch to auto-detect SCCM paths
+$siteCode = $null
+if ($SMS) {
+    Write-Host "SMS mode enabled, detecting SCCM installation..."
+    
+    try {
+        # Get site code - specify property name exactly as it appears in registry
+        $siteCodeValue = Get-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\SMS\Identification" -Name "Site Code" -ErrorAction Stop
+        $siteCode = $siteCodeValue.'Site Code'
+        
+        if ($siteCode) {
+            Write-Host "Site Code detected: $siteCode"
+            
+            # Get installation directory - specify property name exactly as it appears in registry
+            $installDirValue = Get-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\SMS\Identification" -Name "Installation Directory" -ErrorAction Stop
+            $installDir = $installDirValue.'Installation Directory'
+            
+            if ($installDir) {
+                Write-Host "Installation Directory: $installDir"
+                
+                # Remove "Microsoft Configuration Manager" and replace with "SMS_CCM\Logs\PatchDownloader.log"
+                # Handle various possible path formats
+                $basePath = $installDir -replace '\\Microsoft Configuration Manager\\?$', ''
+                $basePath = $basePath.TrimEnd('\')
+                $LogFile = Join-Path $basePath "SMS_CCM\Logs\PatchDownloader.log"
+                
+                Write-Host "Using SMS log path: $LogFile"
+            }
+            else {
+                Write-Host "Warning: Installation Directory registry value is empty"
+            }
+        }
+        else {
+            Write-Host "Warning: Site Code registry value is empty"
+        }
+    }
+    catch [System.Management.Automation.ItemNotFoundException] {
+        Write-Host "Warning: SMS registry key not found. Ensure SCCM client is installed."
+    }
+    catch [System.Management.Automation.PSArgumentException] {
+        Write-Host "Warning: SMS registry property not found. Registry structure may be different."
+    }
+    catch {
+        Write-Host "Warning: Could not read SMS registry keys: $($_.Exception.Message)"
+    }
+    
+    Write-Host ""
+}
+# Auto-locate Patch My PC PublishingHistory.csv when -SMS is used
+if ($SMS) {
+    Write-Host "Detecting Patch My PC Publishing Service path..."
+
+    try {
+        $pmpc = Get-ItemProperty -Path "HKLM:\SOFTWARE\Patch My PC Publishing Service" -Name "Path" -ErrorAction Stop
+        $pmpcPath = $pmpc.Path
+
+        if ($pmpcPath) {
+            Write-Host "Patch My PC path detected: $pmpcPath"
+
+            # Construct expected CSV path
+            $autoCsv = Join-Path $pmpcPath "PatchMyPC-PublishingHistory.csv"
+
+            if (Test-Path $autoCsv) {
+                # Did the user also specify their own CSV?
+                if ($PSBoundParameters.ContainsKey('CsvFile')) {
+                    Write-Host "WARNING: Both -SMS and -CsvFile were specified. Using CsvFile parameter: $CsvFile"
+                }
+                else {
+                    Write-Host "Using Patch My PC PublishingHistory CSV: $autoCsv"
+                    $CsvFile = $autoCsv
+                }
+            }
+            else {
+                Write-Host "Warning: PublishingHistory.csv not found at detected path."
+                Write-Host "Expected: $autoCsv"
+            }
+        }
+        else {
+            Write-Host "Warning: Patch My PC 'Path' registry value is empty."
+        }
+    }
+    catch {
+        Write-Host "Warning: Could not read Patch My PC Publishing Service registry key: $($_.Exception.Message)"
+    }
+
+    Write-Host ""
+}
 
 # Handle zip file extraction
 $tempExtractPath = $null
@@ -78,9 +175,40 @@ if ($ZipFile) {
         Expand-Archive -Path $ZipFile -DestinationPath $tempExtractPath -Force
         Write-Host "Extracted to: $tempExtractPath"
         
-        # Override LogFile and CsvFile paths
+        # Try expected paths first
         $LogFile = Join-Path $tempExtractPath "Client\PatchDownloader.log"
         $CsvFile = Join-Path $tempExtractPath "PatchMyPC\PatchMyPC-PublishingHistory.csv"
+        
+        # If PatchDownloader.log not found in expected location, search recursively
+        if (-not (Test-Path $LogFile)) {
+            Write-Host "PatchDownloader.log not found in expected location, searching extracted files..."
+            $foundLog = Get-ChildItem -Path $tempExtractPath -Filter "PatchDownloader.log" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+            
+            if ($foundLog) {
+                $LogFile = $foundLog.FullName
+                Write-Host "Found PatchDownloader.log at: $LogFile"
+            }
+            else {
+                Write-Host "ERROR: PatchDownloader.log not found in the extracted zip file."
+                Write-Host "Searched in: $tempExtractPath"
+                # Cleanup before exit
+                if (Test-Path $tempExtractPath) {
+                    Remove-Item -Path $tempExtractPath -Recurse -Force -ErrorAction SilentlyContinue
+                }
+                exit 1
+            }
+        }
+        
+        # If CSV not found in expected location, search recursively
+        if (-not (Test-Path $CsvFile)) {
+            Write-Host "PatchMyPC-PublishingHistory.csv not found in expected location, searching extracted files..."
+            $foundCsv = Get-ChildItem -Path $tempExtractPath -Filter "PatchMyPC-PublishingHistory.csv" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+            
+            if ($foundCsv) {
+                $CsvFile = $foundCsv.FullName
+                Write-Host "Found PatchMyPC-PublishingHistory.csv at: $CsvFile"
+            }
+        }
     }
     catch {
         Write-Host "Failed to extract zip file: $_"
@@ -95,19 +223,41 @@ Write-Host ""
 
 # Validate files
 if (-not (Test-Path $LogFile)) {
-    Write-Host "Log file not found: $LogFile"
-	Write-Host "If the log file is in another location, use -LogFile"
+    Write-Host "ERROR: Log file not found: $LogFile"
+    Write-Host "If the log file is in another location, use -LogFile <path>"
+    if ($SMS) {
+        Write-Host "Note: -SMS flag was used but path detection may have failed"
+    }
     exit 1
 }
 if (-not (Test-Path $CsvFile)) {
-    Write-Host "CSV file not found: $CsvFile"
-	Write-Host "If the CSV file is in another location, use -CsvFile"
+    Write-Host "ERROR: CSV file not found: $CsvFile"
+    Write-Host "If the CSV file is in another location, use -CsvFile <path>"
     exit 1
 }
 
 # Import CSV
-$csvData = Import-Csv -Path $CsvFile
-$logLines = Get-Content -Path $LogFile
+try {
+    $csvData = Import-Csv -Path $CsvFile -ErrorAction Stop
+    if ($csvData.Count -eq 0) {
+        Write-Host "WARNING: CSV file is empty"
+    }
+}
+catch {
+    Write-Host "ERROR: Failed to import CSV file: $($_.Exception.Message)"
+    exit 1
+}
+
+try {
+    $logLines = Get-Content -Path $LogFile -ErrorAction Stop
+    if ($logLines.Count -eq 0) {
+        Write-Host "WARNING: Log file is empty"
+    }
+}
+catch {
+    Write-Host "ERROR: Failed to read log file: $($_.Exception.Message)"
+    exit 1
+}
 
 $updates = @{}
 $updateIdPattern = 'Download destination\s*=\s*.*?\\(?<UpdateID>[0-9a-fA-F-]+)\.1\\'
