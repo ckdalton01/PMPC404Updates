@@ -288,6 +288,7 @@ catch {
 
 $updates = @{}
 $updateIdPattern = 'Download destination\s*=\s*.*?\\(?<UpdateID>[0-9a-fA-F-]+)\.1\\'
+$currentUpdateID = $null
 
 for ($i = 0; $i -lt $logLines.Count; $i++) {
     $line = $logLines[$i]
@@ -305,10 +306,10 @@ for ($i = 0; $i -lt $logLines.Count; $i++) {
 
     # Detect failure patterns
     if ($line -match 'HTTP_STATUS_NOT_FOUND' -or $line -match 'returns 404') {
-        $lastUpdateKey = $updates.Keys | Select-Object -Last 1
-        if ($lastUpdateKey) {
-            $updates[$lastUpdateKey]['Failed'] = $true
-            $updates[$lastUpdateKey]['Lines'] += $line
+
+        if ($currentUpdateID) {
+            $updates[$currentUpdateID]['Failed'] = $true
+            $updates[$currentUpdateID]['Lines'] += $line
         }
     }
 }
