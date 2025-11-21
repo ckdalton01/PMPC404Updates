@@ -54,9 +54,14 @@
     # Use SMS registry to auto-detect SCCM installation path
     .\Parse-PatchDownloader.ps1 -SMS
 
+.EXAMPLE
+    # Run with verbose output
+    .\Parse-PatchDownloader.ps1 -Verbose
+
 .NOTES
     Author: C. Dalton
     Date: 2025-11-06
+    Log file location: $env:TEMP\Parse-PatchDownloader.log
 #>
 
 param(
@@ -67,13 +72,83 @@ param(
     [switch]$SMS
 )
 
-Write-Host ""
-Write-Host "=== PatchDownloader Log Parser ==="
+# Initialize log file
+$ScriptLogFile = Join-Path $env:TEMP "Parse-PatchDownloader.log"
+$ScriptStartTime = Get-Date
+
+# Function to write to both console and log file in CMTrace format
+function Write-Log {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$Message,
+        
+        [Parameter(Mandatory=$false)]
+        [ValidateSet('Info', 'Warning', 'Error', 'Verbose')]
+        [string]$Level = 'Info'
+    )
+    
+    # Map log levels to CMTrace severity
+    # 1 = Informational, 2 = Warning, 3 = Error
+    $severity = switch ($Level) {
+        'Error'   { 3 }
+        'Warning' { 2 }
+        'Verbose' { 1 }
+        'Info'    { 1 }
+        default   { 1 }
+    }
+    
+    # Get script context information
+    $scriptName = Split-Path -Leaf $MyInvocation.ScriptName
+    if (-not $scriptName) { $scriptName = "Parse-PatchDownloader.ps1" }
+    
+    # Get timestamp components
+    $time = Get-Date -Format "HH:mm:ss.fff"
+    $date = Get-Date -Format "MM-dd-yyyy"
+    
+    # Get timezone bias
+    $tzBias = [System.TimeZoneInfo]::Local.GetUtcOffset((Get-Date)).TotalMinutes
+    
+    # Build CMTrace format log line
+    # Format: <![LOG[Message]LOG]!><time="HH:mm:ss.fff+/-TZBias" date="MM-dd-yyyy" component="ComponentName" context="" type="Severity" thread="ThreadID" file="ScriptName">
+    $cmTraceLog = "<![LOG[$Message]LOG]!><time=`"$time$($tzBias)`" date=`"$date`" component=`"$scriptName`" context=`"`" type=`"$severity`" thread=`"$PID`" file=`"$scriptName`">"
+    
+    # Write to log file
+    try {
+        Add-Content -Path $ScriptLogFile -Value $cmTraceLog -ErrorAction SilentlyContinue
+    }
+    catch {
+        # Silently fail if we can't write to log
+    }
+    
+    # Write to console based on level
+    switch ($Level) {
+        'Error'   { Write-Host $Message -ForegroundColor Red }
+        'Warning' { Write-Host $Message -ForegroundColor Yellow }
+        'Verbose' { Write-Verbose $Message }
+        'Info'    { Write-Host $Message }
+    }
+}
+
+# Initialize log file (append mode)
+try {
+    # Ensure log file exists, create if it doesn't, but don't overwrite
+    if (-not (Test-Path $ScriptLogFile)) {
+        "" | Set-Content -Path $ScriptLogFile -ErrorAction Stop
+    }
+    Write-Log "========== Script started at $ScriptStartTime ==========" -Level Verbose
+}
+catch {
+    Write-Host "Warning: Could not initialize log file at $ScriptLogFile"
+}
+
+Write-Verbose ""
+Write-Verbose "=== PatchDownloader Log Parser ===" -Verbose
+Write-Log "PatchDownloader Log Parser started" -Level Verbose
 
 # Handle -SMS switch to auto-detect SCCM paths
 $siteCode = $null
 if ($SMS) {
-    Write-Host "SMS mode enabled, detecting SCCM installation..."
+    Write-Log "SMS mode enabled, detecting SCCM installation..." -Level Verbose
     
     try {
         # Get site code - specify property name exactly as it appears in registry
@@ -81,14 +156,14 @@ if ($SMS) {
         $siteCode = $siteCodeValue.'Site Code'
         
         if ($siteCode) {
-            Write-Host "Site Code detected: $siteCode"
+            Write-Log "Site Code detected: $siteCode" -Level Verbose
             
             # Get installation directory - specify property name exactly as it appears in registry
             $installDirValue = Get-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\SMS\Identification" -Name "Installation Directory" -ErrorAction Stop
             $installDir = $installDirValue.'Installation Directory'
             
             if ($installDir) {
-                Write-Host "Installation Directory: $installDir"
+                Write-Log "Installation Directory: $installDir" -Level Verbose
                 
                 # Remove "Microsoft Configuration Manager" and replace with "SMS_CCM\Logs\PatchDownloader.log"
                 # Handle various possible path formats
@@ -96,38 +171,39 @@ if ($SMS) {
                 $basePath = $basePath.TrimEnd('\')
                 $LogFile = Join-Path $basePath "SMS_CCM\Logs\PatchDownloader.log"
                 
-                Write-Host "Using SMS log path: $LogFile"
+                Write-Log "Using SMS log path: $LogFile" -Level Verbose
             }
             else {
-                Write-Host "Warning: Installation Directory registry value is empty"
+                Write-Log "Installation Directory registry value is empty" -Level Warning
             }
         }
         else {
-            Write-Host "Warning: Site Code registry value is empty"
+            Write-Log "Site Code registry value is empty" -Level Warning
         }
     }
     catch [System.Management.Automation.ItemNotFoundException] {
-        Write-Host "Warning: SMS registry key not found. Ensure SCCM client is installed."
+        Write-Log "SMS registry key not found. Ensure SCCM client is installed." -Level Warning
     }
     catch [System.Management.Automation.PSArgumentException] {
-        Write-Host "Warning: SMS registry property not found. Registry structure may be different."
+        Write-Log "SMS registry property not found. Registry structure may be different." -Level Warning
     }
     catch {
-        Write-Host "Warning: Could not read SMS registry keys: $($_.Exception.Message)"
+        Write-Log "Could not read SMS registry keys: $($_.Exception.Message)" -Level Warning
     }
     
-    Write-Host ""
+    Write-Verbose ""
 }
+
 # Auto-locate Patch My PC PublishingHistory.csv when -SMS is used
 if ($SMS) {
-    Write-Host "Detecting Patch My PC Publishing Service path..."
+    Write-Log "Detecting Patch My PC Publishing Service path..." -Level Verbose
 
     try {
         $pmpc = Get-ItemProperty -Path "HKLM:\SOFTWARE\Patch My PC Publishing Service" -Name "Path" -ErrorAction Stop
         $pmpcPath = $pmpc.Path
 
         if ($pmpcPath) {
-            Write-Host "Patch My PC path detected: $pmpcPath"
+            Write-Log "Patch My PC path detected: $pmpcPath" -Level Verbose
 
             # Construct expected CSV path
             $autoCsv = Join-Path $pmpcPath "PatchMyPC-PublishingHistory.csv"
@@ -135,45 +211,44 @@ if ($SMS) {
             if (Test-Path $autoCsv) {
                 # Did the user also specify their own CSV?
                 if ($PSBoundParameters.ContainsKey('CsvFile')) {
-                    Write-Host "WARNING: Both -SMS and -CsvFile were specified. Using CsvFile parameter: $CsvFile"
+                    Write-Log "Both -SMS and -CsvFile were specified. Using CsvFile parameter: $CsvFile" -Level Warning
                 }
                 else {
-                    Write-Host "Using Patch My PC PublishingHistory CSV: $autoCsv"
+                    Write-Log "Using Patch My PC PublishingHistory CSV: $autoCsv" -Level Verbose
                     $CsvFile = $autoCsv
                 }
             }
             else {
-                Write-Host "Warning: PublishingHistory.csv not found at detected path."
-                Write-Host "Expected: $autoCsv"
+                Write-Log "PublishingHistory.csv not found at detected path. Expected: $autoCsv" -Level Warning
             }
         }
         else {
-            Write-Host "Warning: Patch My PC 'Path' registry value is empty."
+            Write-Log "Patch My PC 'Path' registry value is empty." -Level Warning
         }
     }
     catch {
-        Write-Host "Warning: Could not read Patch My PC Publishing Service registry key: $($_.Exception.Message)"
+        Write-Log "Could not read Patch My PC Publishing Service registry key: $($_.Exception.Message)" -Level Warning
     }
 
-    Write-Host ""
+    Write-Verbose ""
 }
 
 # Handle zip file extraction
 $tempExtractPath = $null
 if ($ZipFile) {
     if (-not (Test-Path $ZipFile)) {
-        Write-Host "Zip file not found: $ZipFile"
+        Write-Log "Zip file not found: $ZipFile" -Level Error
         exit 1
     }
     
-    Write-Host "ZipFile: $ZipFile"
-    Write-Host "Extracting zip file..."
+    Write-Log "ZipFile: $ZipFile" -Level Verbose
+    Write-Log "Extracting zip file..." -Level Verbose
     
     $tempExtractPath = Join-Path $env:TEMP "PatchDownloaderParser_$(Get-Date -Format 'yyyyMMdd_HHmmss')"
     
     try {
         Expand-Archive -Path $ZipFile -DestinationPath $tempExtractPath -Force
-        Write-Host "Extracted to: $tempExtractPath"
+        Write-Log "Extracted to: $tempExtractPath" -Level Verbose
         
         # Try expected paths first
         $LogFile = Join-Path $tempExtractPath "Client\PatchDownloader.log"
@@ -181,16 +256,15 @@ if ($ZipFile) {
         
         # If PatchDownloader.log not found in expected location, search recursively
         if (-not (Test-Path $LogFile)) {
-            Write-Host "PatchDownloader.log not found in expected location, searching extracted files..."
+            Write-Log "PatchDownloader.log not found in expected location, searching extracted files..." -Level Verbose
             $foundLog = Get-ChildItem -Path $tempExtractPath -Filter "PatchDownloader.log" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
             
             if ($foundLog) {
                 $LogFile = $foundLog.FullName
-                Write-Host "Found PatchDownloader.log at: $LogFile"
+                Write-Log "Found PatchDownloader.log at: $LogFile" -Level Verbose
             }
             else {
-                Write-Host "ERROR: PatchDownloader.log not found in the extracted zip file."
-                Write-Host "Searched in: $tempExtractPath"
+                Write-Log "PatchDownloader.log not found in the extracted zip file. Searched in: $tempExtractPath" -Level Error
                 # Cleanup before exit
                 if (Test-Path $tempExtractPath) {
                     Remove-Item -Path $tempExtractPath -Recurse -Force -ErrorAction SilentlyContinue
@@ -201,29 +275,29 @@ if ($ZipFile) {
         
         # If CSV not found in expected location, search recursively
         if (-not (Test-Path $CsvFile)) {
-            Write-Host "PatchMyPC-PublishingHistory.csv not found in expected location, searching extracted files..."
+            Write-Log "PatchMyPC-PublishingHistory.csv not found in expected location, searching extracted files..." -Level Verbose
             $foundCsv = Get-ChildItem -Path $tempExtractPath -Filter "PatchMyPC-PublishingHistory.csv" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
             
             if ($foundCsv) {
                 $CsvFile = $foundCsv.FullName
-                Write-Host "Found PatchMyPC-PublishingHistory.csv at: $CsvFile"
+                Write-Log "Found PatchMyPC-PublishingHistory.csv at: $CsvFile" -Level Verbose
             }
         }
     }
     catch {
-        Write-Host "Failed to extract zip file: $_"
+        Write-Log "Failed to extract zip file: $_" -Level Error
         exit 1
     }
 }
 
-Write-Host "LogFile: $LogFile"
-Write-Host "CsvFile: $CsvFile"
-if ($Output) { Write-Host "Output : $Output" }
-Write-Host ""
+Write-Log "LogFile: $LogFile" -Level Verbose
+Write-Log "CsvFile: $CsvFile" -Level Verbose
+if ($Output) { Write-Log "Output : $Output" -Level Verbose }
+Write-Verbose ""
 
 # Validate files
 if (-not (Test-Path $LogFile)) {
-    Write-Host "ERROR: Log file not found: $LogFile"
+    Write-Log "Log file not found: $LogFile" -Level Error
     Write-Host "If the log file is in another location, use -LogFile <path>"
     if ($SMS) {
         Write-Host "Note: -SMS flag was used but path detection may have failed"
@@ -234,29 +308,31 @@ if (-not (Test-Path $CsvFile)) {
     if ($SMS) {
         $csvData = @()  # Empty array so later logic works
     } else {
-        Write-Host "ERROR: CSV file not found: $CsvFile"
+        Write-Log "CSV file not found: $CsvFile" -Level Error
         Write-Host "If the CSV file is in another location, use -CsvFile <path>"
         exit 1
     }
 }
 
-
-
 # Import CSV if available
 $csvData = @()  # Initialize as empty array
 if (Test-Path $CsvFile) {
     try {
+        Write-Log "Importing CSV file..." -Level Verbose
         $csvData = Import-Csv -Path $CsvFile -ErrorAction Stop
         if ($csvData.Count -eq 0) {
-            Write-Host "WARNING: CSV file is empty"
+            Write-Log "CSV file is empty" -Level Warning
             if (-not $SMS) {
                 Write-Host "CSV is required when -SMS is not used."
                 exit 1
             }
         }
+        else {
+            Write-Log "CSV imported successfully. $($csvData.Count) records found." -Level Verbose
+        }
     }
     catch {
-        Write-Host "ERROR: Failed to import CSV file: $($_.Exception.Message)"
+        Write-Log "Failed to import CSV file: $($_.Exception.Message)" -Level Error
         if (-not $SMS) {
             exit 1
         } else {
@@ -267,25 +343,29 @@ if (Test-Path $CsvFile) {
 }
 else {
     if (-not $SMS) {
-        Write-Host "ERROR: CSV file not found: $CsvFile"
+        Write-Log "CSV file not found: $CsvFile" -Level Error
         exit 1
     } else {
-        Write-Host "CSV file not found, continuing with WMI only (SMS mode)."
+        Write-Log "CSV file not found, continuing with WMI only (SMS mode)." -Level Verbose
     }
 }
 
-
 try {
+    Write-Log "Reading log file..." -Level Verbose
     $logLines = Get-Content -Path $LogFile -ErrorAction Stop
     if ($logLines.Count -eq 0) {
-        Write-Host "WARNING: Log file is empty"
+        Write-Log "Log file is empty" -Level Warning
+    }
+    else {
+        Write-Log "Log file read successfully. $($logLines.Count) lines found." -Level Verbose
     }
 }
 catch {
-    Write-Host "ERROR: Failed to read log file: $($_.Exception.Message)"
+    Write-Log "Failed to read log file: $($_.Exception.Message)" -Level Error
     exit 1
 }
 
+Write-Log "Parsing log file for failed downloads..." -Level Verbose
 $updates = @{}
 $updateIdPattern = 'Download destination\s*=\s*.*?\\(?<UpdateID>[0-9a-fA-F-]+)\.1\\'
 $currentUpdateID = $null
@@ -315,13 +395,16 @@ for ($i = 0; $i -lt $logLines.Count; $i++) {
 }
 
 $failedUpdates = $updates.GetEnumerator() | Where-Object { $_.Value.Failed -eq $true }
+Write-Log "Found $($failedUpdates.Count) failed downloads" -Level Verbose
 
 if ($failedUpdates.Count -eq 0) {
     Write-Host "No failed downloads found in log."
+    Write-Log "No failed downloads found in log." -Level Info
     exit 0
 }
 
 Write-Host "Failed Downloads Found:`n"
+Write-Log "Processing failed updates..." -Level Verbose
 $results = @()   # Initialize as an empty array
 
 # === UPDATED BLOCK WITH WMI INTEGRATION ===
@@ -331,12 +414,13 @@ foreach ($update in $failedUpdates) {
 
     if ($SMS -and $siteCode) {
         try {
+            Write-Log "Querying WMI for UpdateID: $id" -Level Verbose
             $wmiData = Get-CimInstance -ClassName SMS_SoftwareUpdate `
                 -Namespace "root\SMS\site_$siteCode" `
                 -Filter "CI_UniqueID = '$id'" |
                 Select-Object LocalizedDisplayName, DateCreated, CI_UniqueID
         } catch {
-            Write-Host "Warning: WMI query failed for UpdateID $($id): $($_.Exception.Message)"
+            Write-Log "WMI query failed for UpdateID $($id): $($_.Exception.Message)" -Level Warning
         }
     }
 
@@ -366,8 +450,9 @@ foreach ($update in $failedUpdates) {
     Write-Host "  Severity: $($obj.Severity)"
     Write-Host "  Source: $($obj.Source)"
     Write-Host ""
+    
+    Write-Log "Processed UpdateID: $id | Title: $($obj.Title) | Source: $($obj.Source)" -Level Verbose
 }
-
 
 # Export to file if requested
 if ($Output) {
@@ -375,17 +460,18 @@ if ($Output) {
     if (-not (Test-Path $outputDir)) {
         try {
             New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
-            Write-Host "Created output directory: $outputDir"
+            Write-Log "Created output directory: $outputDir" -Level Verbose
         } catch {
-            Write-Host "Failed to create output directory: $_"
+            Write-Log "Failed to create output directory: $_" -Level Error
         }
     }
 
     try {
         $results | Export-Csv -Path $Output -NoTypeInformation -Encoding UTF8
         Write-Host "Results exported to: $Output"
+        Write-Log "Results exported to: $Output" -Level Verbose
     } catch {
-        Write-Host "Failed to write output CSV: $_"
+        Write-Log "Failed to write output CSV: $_" -Level Error
     }
 }
 
@@ -397,11 +483,22 @@ Write-Host "https://patchmypc.com/kb/when-how-republish-patch-my/"
 if ($tempExtractPath -and (Test-Path $tempExtractPath)) {
     try {
         Remove-Item -Path $tempExtractPath -Recurse -Force
+        Write-Log "Cleaned up temporary files at: $tempExtractPath" -Level Verbose
         Write-Host ""
         Write-Host "Cleaned up temporary files."
     }
     catch {
+        Write-Log "Could not clean up temporary folder: $tempExtractPath - $_" -Level Warning
         Write-Host ""
         Write-Host "Warning: Could not clean up temporary folder: $tempExtractPath"
     }
 }
+
+# Log script completion
+$ScriptEndTime = Get-Date
+$Duration = $ScriptEndTime - $ScriptStartTime
+Write-Log "Script completed at $ScriptEndTime (Duration: $($Duration.TotalSeconds) seconds)" -Level Verbose
+Write-Log "========== Script execution completed ==========" -Level Verbose
+Write-Log "Log file location: $ScriptLogFile" -Level Verbose
+Write-Host ""
+Write-Host "Script log saved to: $ScriptLogFile" -ForegroundColor Cyan
