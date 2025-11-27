@@ -138,7 +138,7 @@ try {
     Write-Log "========== Script started at $ScriptStartTime ==========" -Level Verbose
 }
 catch {
-    Write-Host "Warning: Could not initialize log file at $ScriptLogFile"
+    Write-Verbose "Warning: Could not initialize log file at $ScriptLogFile"
 }
 
 Write-Verbose ""
@@ -148,6 +148,7 @@ Write-Log "PatchDownloader Log Parser started" -Level Verbose
 # Handle -SMS switch to auto-detect SCCM paths
 $siteCode = $null
 if ($SMS) {
+    Write-Verbose "SMS mode enabled, detecting SCCM installation..." -Verbose
     Write-Log "SMS mode enabled, detecting SCCM installation..." -Level Verbose
     
     try {
@@ -156,6 +157,7 @@ if ($SMS) {
         $siteCode = $siteCodeValue.'Site Code'
         
         if ($siteCode) {
+            Write-Verbose "Site Code detected: $siteCode" -Verbose
             Write-Log "Site Code detected: $siteCode" -Level Verbose
             
             # Get installation directory - specify property name exactly as it appears in registry
@@ -171,6 +173,7 @@ if ($SMS) {
                 $basePath = $basePath.TrimEnd('\')
                 $LogFile = Join-Path $basePath "SMS_CCM\Logs\PatchDownloader.log"
                 
+                Write-Verbose "Using SMS log path: $LogFile" -Verbose
                 Write-Log "Using SMS log path: $LogFile" -Level Verbose
             }
             else {
@@ -197,6 +200,7 @@ if ($SMS) {
 # Auto-locate Patch My PC PublishingHistory.csv when -SMS is used
 if ($SMS) {
     Write-Log "Detecting Patch My PC Publishing Service path..." -Level Verbose
+    Write-Verbose "Detecting Patch My PC Publishing Service path..." -Verbose
 
     try {
         $pmpc = Get-ItemProperty -Path "HKLM:\SOFTWARE\Patch My PC Publishing Service" -Name "Path" -ErrorAction Stop
@@ -215,6 +219,7 @@ if ($SMS) {
                 }
                 else {
                     Write-Log "Using Patch My PC PublishingHistory CSV: $autoCsv" -Level Verbose
+                    Write-Verbose "Using Patch My PC PublishingHistory CSV: $autoCsv" -Verbose
                     $CsvFile = $autoCsv
                 }
             }
@@ -243,6 +248,7 @@ if ($ZipFile) {
     
     Write-Log "ZipFile: $ZipFile" -Level Verbose
     Write-Log "Extracting zip file..." -Level Verbose
+    Write-Verbose "Extracting zip file..." -Verbose
     
     $tempExtractPath = Join-Path $env:TEMP "PatchDownloaderParser_$(Get-Date -Format 'yyyyMMdd_HHmmss')"
     
@@ -257,14 +263,18 @@ if ($ZipFile) {
         # If PatchDownloader.log not found in expected location, search recursively
         if (-not (Test-Path $LogFile)) {
             Write-Log "PatchDownloader.log not found in expected location, searching extracted files..." -Level Verbose
+            Write-Verbose "PatchDownloader.log not found in expected location, searching extracted files..." -Verbose
+            
             $foundLog = Get-ChildItem -Path $tempExtractPath -Filter "PatchDownloader.log" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
             
             if ($foundLog) {
                 $LogFile = $foundLog.FullName
                 Write-Log "Found PatchDownloader.log at: $LogFile" -Level Verbose
+                Write-Verbose "Found PatchDownloader.log at: $LogFile" -Verbose
             }
             else {
                 Write-Log "PatchDownloader.log not found in the extracted zip file. Searched in: $tempExtractPath" -Level Error
+                Write-Verbose "PatchDownloader.log not found in the extracted zip file. Searched in: $tempExtractPath" -Verbose
                 # Cleanup before exit
                 if (Test-Path $tempExtractPath) {
                     Remove-Item -Path $tempExtractPath -Recurse -Force -ErrorAction SilentlyContinue
