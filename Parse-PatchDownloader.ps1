@@ -309,6 +309,7 @@ Write-Verbose ""
 if (-not (Test-Path $LogFile)) {
     Write-Log "Log file not found: $LogFile" -Level Error
     Write-Host "If the log file is in another location, use -LogFile <path>"
+    Write-Host "If running on SCCM Primary Site Server, use -SMS"
     if ($SMS) {
         Write-Host "Note: -SMS flag was used but path detection may have failed"
     }
