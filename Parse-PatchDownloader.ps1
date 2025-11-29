@@ -321,6 +321,7 @@ if (-not (Test-Path $CsvFile)) {
     } else {
         Write-Log "CSV file not found: $CsvFile" -Level Error
         Write-Host "If the CSV file is in another location, use -CsvFile <path>"
+        Write-Host "If running on Primary Site Server, use -SMS"
         exit 1
     }
 }
